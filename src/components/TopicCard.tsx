@@ -36,6 +36,11 @@ const TopicCard: React.FC<TopicCardProps> = ({
     onDelete(topic.id);
   };
 
+  const handleViewTweets = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onViewTweets(topic);
+  };
+
   const handleToggleExpand = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (onToggleExpand) {
@@ -70,7 +75,7 @@ const TopicCard: React.FC<TopicCardProps> = ({
     const x = e.clientX;
     const y = e.clientY;
     
-    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+    if (x < rect.left || x > rect.right || y < rect.top || y < rect.bottom) {
       setDragOver(null);
     }
   };

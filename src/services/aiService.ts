@@ -27,26 +27,13 @@ export class AIService {
   ): Promise<{ twitterSummary?: string; telegramSummary?: string }> {
     try {
       const now = new Date();
-      const currentDateTime = now.toISOString();
-      const currentDateTimeFormatted = now.toLocaleString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        timeZoneName: 'short'
-      });
-
       let twitterSummary: string | undefined;
       let telegramSummary: string | undefined;
 
-      // Get word count based on summary length
       const getWordCount = (length: 'concise' | 'detailed' | 'comprehensive', hasContent: boolean) => {
-        if (!hasContent) return '20';
-        
+        if (!hasContent) return '20-30';
         switch (length) {
-          case 'concise': return '20-30';
+          case 'concise': return '30-40';
           case 'detailed': return '50-75';
           case 'comprehensive': return '100-150';
           default: return '50-75';
@@ -57,80 +44,56 @@ export class AIService {
       if (tweets.length > 0 && twitterUsername) {
         const recentTweets = tweets.filter(tweet => this.isWithin24Hours(tweet.createdAt));
         const olderTweets = tweets.filter(tweet => !this.isWithin24Hours(tweet.createdAt));
+        const wordCount = getWordCount(summaryLength, recentTweets.length > 0);
 
         if (recentTweets.length === 0) {
           const oldTweetTexts = olderTweets.slice(0, 5).map(tweet => 
-            `"${tweet.text}" (${new Date(tweet.createdAt).toLocaleDateString()})`
+            `"${tweet.text}" (from ${new Date(tweet.createdAt).toLocaleDateString()})`
           ).join('\n\n');
 
-          const prompt = `Current date and time: ${currentDateTimeFormatted}
+          const systemPrompt = `You are a social media analyst. The user you're tracking hasn't posted recently. Briefly summarize their last known activity in a conversational tone, making it clear the information isn't current. Write about ${wordCount} words.`;
+          const userPrompt = `@${twitterUsername} has been quiet. What were their last few posts about?\n\nPrevious Posts:\n${oldTweetTexts}`;
+          
+          twitterSummary = await this.callAI(userPrompt, systemPrompt, twitterUsername);
 
-@${twitterUsername} has not posted any tweets recently. Write a brief ${getWordCount(summaryLength, false)} word summary about what their last tweets were about. Be conversational and natural. Start with "${twitterUsername}" and then describe their content.
-
-Their previous tweets:
-${oldTweetTexts}`;
-
-          twitterSummary = await this.callAI(prompt, `You are a social media observer. Write exactly ${getWordCount(summaryLength, false)} words in a conversational tone about what someone's last tweets were about. ALWAYS start with the person's name "${twitterUsername}" followed by their content description. Be natural and specific.`);
         } else {
-          // Get top 5 most engaging tweets (by likes + retweets)
           const topTweets = recentTweets
             .sort((a, b) => (b.likeCount + b.retweetCount) - (a.likeCount + a.retweetCount))
             .slice(0, 5);
 
           const recentTweetTexts = topTweets.map(tweet => {
-            const tweetDate = new Date(tweet.createdAt);
-            const hoursAgo = Math.floor((now.getTime() - tweetDate.getTime()) / (1000 * 60 * 60));
-            const timeAgo = hoursAgo === 0 ? 'just now' : `${hoursAgo}h ago`;
-            
-            return `"${tweet.text}" (${tweet.likeCount} likes, ${tweet.retweetCount} retweets, ${timeAgo})`;
+            const hoursAgo = Math.floor((now.getTime() - new Date(tweet.createdAt).getTime()) / 3600000);
+            return `"${tweet.text}" (Likes: ${tweet.likeCount}, Retweets: ${tweet.retweetCount}, ~${hoursAgo}h ago)`;
           }).join('\n\n');
 
-          const wordCount = getWordCount(summaryLength, true);
-
-          const prompt = `Current date and time: ${currentDateTimeFormatted}
-
-Write a detailed, conversational summary of what @${twitterUsername} has been posting about on X recently. Include specific names, companies, topics, numbers, and key details mentioned. Be natural and engaging, like you're telling a friend what's happening. Write ${wordCount} words. Start with "${twitterUsername}" and then describe their content.
-
-Recent posts (top 5 by engagement):
-${recentTweetTexts}`;
-
-          twitterSummary = await this.callAI(prompt, `You are a social media observer who writes detailed, conversational summaries. Write ${wordCount} words that capture the key details, names, companies, topics, and numbers mentioned. ALWAYS start with the person's name "${twitterUsername}" followed by their content description. Be specific and include important context. Write as flowing, natural paragraphs.`);
+          const systemPrompt = `You are a sharp social media analyst. Your goal is to synthesize raw social media posts into a clear, engaging, and concise briefing. Identify the key themes, topics, and sentiment. Weave these details into a smooth, easy-to-read paragraph of about ${wordCount} words. The tone should be informative but conversational. Do not use lists. Vary your sentence structure and avoid starting every summary with the person's name.`;
+          const userPrompt = `Summarize the recent X activity for @${twitterUsername} based on their top posts from the last 24 hours.\n\nPosts:\n${recentTweetTexts}`;
+          
+          twitterSummary = await this.callAI(userPrompt, systemPrompt, twitterUsername);
         }
       }
 
       // Process Telegram content
       if (telegramMessages.length > 0 && telegramChannelName) {
         const recentMessages = telegramMessages.filter(msg => this.isWithin24Hours(msg.date));
+        const wordCount = getWordCount(summaryLength, recentMessages.length > 0);
 
         if (recentMessages.length === 0) {
-          telegramSummary = `${telegramChannelName} has no recent messages in the current period.`;
+          telegramSummary = `There has been no new activity in the ${telegramChannelName} channel recently.`;
         } else {
-          // Get top 5 messages (by views if available, otherwise most recent)
           const topMessages = recentMessages
-            .sort((a, b) => {
-              if (a.views && b.views) return b.views - a.views;
-              return new Date(b.date).getTime() - new Date(a.date).getTime();
-            })
+            .sort((a, b) => (b.views || 0) - (a.views || 0))
             .slice(0, 5);
 
           const recentMessageTexts = topMessages.map(msg => {
-            const msgDate = new Date(msg.date);
-            const hoursAgo = Math.floor((now.getTime() - msgDate.getTime()) / (1000 * 60 * 60));
-            const timeAgo = hoursAgo === 0 ? 'just now' : `${hoursAgo}h ago`;
-            
-            return `"${msg.text}" (by ${msg.sender.name}, ${timeAgo})`;
+             const hoursAgo = Math.floor((now.getTime() - new Date(msg.date).getTime()) / 3600000);
+            return `"${msg.text}" (from ${msg.sender.name}, ~${hoursAgo}h ago)`;
           }).join('\n\n');
 
-          const wordCount = getWordCount(summaryLength, true);
+          const systemPrompt = `You are an analyst summarizing a group chat. Your goal is to synthesize the key discussion points, topics, and overall sentiment from a Telegram channel into a clear, engaging summary. Identify the main themes of conversation. Weave these details into a smooth, easy-to-read paragraph of about ${wordCount} words. The tone should be informative and conversational. Do not use lists.`;
+          const userPrompt = `Summarize the recent discussion in the "${telegramChannelName}" Telegram channel based on these key messages from the last 24 hours.\n\nMessages:\n${recentMessageTexts}`;
 
-          const prompt = `Current date and time: ${currentDateTimeFormatted}
-
-Write a detailed, conversational summary of what has been discussed in the ${telegramChannelName} Telegram channel recently. Include specific topics, key points, and important details mentioned. Be natural and engaging, like you're telling a friend what's happening. Write ${wordCount} words. Start with "${telegramChannelName}" and then describe the content.
-
-Recent messages (top 5 by engagement):
-${recentMessageTexts}`;
-
-          telegramSummary = await this.callAI(prompt, `You are a social media observer who writes detailed, conversational summaries. Write ${wordCount} words that capture the key topics, discussions, and important details mentioned. ALWAYS start with the channel name "${telegramChannelName}" followed by the content description. Be specific and include important context. Write as flowing, natural paragraphs.`);
+          telegramSummary = await this.callAI(userPrompt, systemPrompt, undefined, telegramChannelName);
         }
       }
 
@@ -144,7 +107,7 @@ ${recentMessageTexts}`;
     }
   }
 
-  private async callAI(prompt: string, systemPrompt: string): Promise<string> {
+  private async callAI(prompt: string, systemPrompt: string, twitterUsername?: string, telegramChannelName?: string): Promise<string> {
     const response = await fetch(`${API_CONFIG.ai.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -176,13 +139,13 @@ ${recentMessageTexts}`;
 
     const data = await response.json();
     let content = data.choices[0]?.message?.content || 'No summary available.';
-    content = this.cleanContent(content);
+    content = this.cleanContent(content, twitterUsername, telegramChannelName);
     
     return content || 'Unable to generate summary at this time.';
   }
 
-  private cleanContent(content: string): string {
-    // Remove thinking patterns
+  private cleanContent(content: string, twitterUsername?: string, telegramChannelName?: string): string {
+    // Remove thinking patterns and markdown
     content = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
     content = content.replace(/\*\*Think[\s\S]*?\*\*/gi, '');
     content = content.replace(/^Think[\s\S]*?:/gim, '');
@@ -190,17 +153,25 @@ ${recentMessageTexts}`;
     content = content.replace(/^Let me[\s\S]*?:/gim, '');
     content = content.replace(/^Hmm[\s\S]*?:/gim, '');
     content = content.replace(/^Based on[\s\S]*?,/gim, '');
-    
-    // Remove formal formatting
     content = content.replace(/^\d+\.\s*/gm, '');
-    content = content.replace(/^\*\s*/gm, '');
-    content = content.replace(/^-\s*/gm, '');
-    content = content.replace(/\*\*/g, '');
-    content = content.replace(/##/g, '');
+    content = content.replace(/^[\*\-]\s*/gm, '');
+    content = content.replace(/[\*#]/g, '');
     
+    // Remove introductory phrases that the AI might still add
+    content = content.replace(/^Here's a summary of the recent activity:/i, '');
+    content = content.replace(/^Here's a summary:/i, '');
+
     // Clean up and trim
     content = content.trim();
     
+    // Check if the summary starts with the username (in quotes) and remove it
+    if (twitterUsername && content.toLowerCase().startsWith(`"${twitterUsername.toLowerCase()}"`)) {
+        content = content.substring(twitterUsername.length + 2).trim();
+    }
+    if (telegramChannelName && content.toLowerCase().startsWith(`"${telegramChannelName.toLowerCase()}"`)) {
+        content = content.substring(telegramChannelName.length + 2).trim();
+    }
+
     return content;
   }
 

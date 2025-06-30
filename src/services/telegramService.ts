@@ -1,3 +1,5 @@
+// ./src/services/telegramService.ts
+
 import { TelegramUser } from '../types';
 
 export class TelegramService {
@@ -11,7 +13,8 @@ export class TelegramService {
   }
 
   isTelegramMiniApp(): boolean {
-    return !!(window.Telegram?.WebApp && window.Telegram.WebApp.initDataRaw);
+    // The presence of initData is the most reliable check.
+    return !!window.Telegram?.WebApp?.initData;
   }
 
   getTelegramWebApp() {
@@ -21,7 +24,9 @@ export class TelegramService {
   initializeTelegramApp(): void {
     const tg = this.getTelegramWebApp();
     if (tg) {
+      // Call ready() to inform Telegram the app is loaded.
       tg.ready();
+      // Expand the app to full height.
       tg.expand();
       
       // Set theme based on Telegram's color scheme
@@ -35,14 +40,14 @@ export class TelegramService {
 
   async authenticateUser(): Promise<TelegramUser | null> {
     const tg = this.getTelegramWebApp();
-    if (!tg || !tg.initDataRaw) {
+    if (!tg || !tg.initData) {
       return null;
     }
 
     try {
       // In a real implementation, you would send this to your server for validation
       // For now, we'll parse the initData client-side (NOT SECURE for production)
-      const initData = this.parseInitData(tg.initDataRaw);
+      const initData = this.parseInitData(tg.initData);
       
       if (initData.user) {
         // Store user data in localStorage for persistence

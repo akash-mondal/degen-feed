@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Plus, Twitter, MessageSquare, CheckCircle, XCircle } from 'lucide-react';
 
 interface AddTopicModalProps {
@@ -43,7 +43,7 @@ const AddTopicModal: React.FC<AddTopicModalProps> = ({
       const response = await fetch(`/telegram-api/check/${channel.trim().replace('@', '')}`);
       const data = await response.json();
       
-      if (data.valid_and_joinable) {
+      if (response.ok && data.valid_and_joinable) {
         setChannelValidation({ 
           isValidating: false, 
           isValid: true, 
@@ -53,7 +53,7 @@ const AddTopicModal: React.FC<AddTopicModalProps> = ({
         setChannelValidation({ 
           isValidating: false, 
           isValid: false, 
-          message: 'Channel not found or not accessible' 
+          message: data.message || 'Channel not found or not accessible' 
         });
       }
     } catch (error) {
@@ -64,19 +64,25 @@ const AddTopicModal: React.FC<AddTopicModalProps> = ({
       });
     }
   };
+  
+  useEffect(() => {
+    // Condition to run the validation
+    const shouldValidate = (selectedType === 'telegram' || selectedType === 'both') && channelName.trim().length > 3;
 
-  const handleChannelNameChange = (value: string) => {
-    setChannelName(value);
-    
-    // Debounce validation
-    const timeoutId = setTimeout(() => {
-      if ((selectedType === 'telegram' || selectedType === 'both') && value.trim()) {
-        validateTelegramChannel(value);
-      }
-    }, 500);
+    if (!shouldValidate) {
+        setChannelValidation({ isValidating: false, isValid: null, message: '' });
+        return;
+    }
 
-    return () => clearTimeout(timeoutId);
-  };
+    const handler = setTimeout(() => {
+      validateTelegramChannel(channelName);
+    }, 500); // 500ms debounce delay
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [channelName, selectedType]);
+
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -293,7 +299,7 @@ const AddTopicModal: React.FC<AddTopicModalProps> = ({
                     type="text"
                     id="channelName"
                     value={channelName}
-                    onChange={(e) => handleChannelNameChange(e.target.value)}
+                    onChange={(e) => setChannelName(e.target.value)}
                     placeholder="openservai"
                     className="w-full px-3 py-2 sm:px-4 sm:py-3 pr-10 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-black dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/50 dark:focus:ring-white/50 focus:border-transparent text-sm sm:text-base"
                     disabled={isLoading}
@@ -315,7 +321,7 @@ const AddTopicModal: React.FC<AddTopicModalProps> = ({
                   channelValidation.isValid === false ? 'text-red-600 dark:text-red-400' :
                   'text-gray-600 dark:text-gray-400'
                 }`}>
-                  {channelValidation.message || 'Enter channel name without @ symbol'}
+                  {channelValidation.message || 'Enter channel name (min 4 chars)'}
                 </p>
               </div>
             )}
