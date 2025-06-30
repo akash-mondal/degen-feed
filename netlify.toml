@@ -1,0 +1,36 @@
+# =============================================================
+#         Netlify Configuration: Build and Proxy Rules
+# =============================================================
+
+# This section tells Netlify how to build your site.
+[build]
+  command = "npm run build"      # The command to run to build your site
+  publish = "dist"               # The folder that contains the built site
+
+# This section tells Netlify how to handle your API proxies.
+# It's the replacement for the Nginx proxy rules.
+# The 'status = 200' makes it a rewrite (proxy), not a redirect.
+
+[[redirects]]
+  from = "/twitter-api/*"
+  to = "https://api.twitterapi.io/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/ai-api/*"
+  to = "https://api.together.xyz/v1/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/telegram-api/*"
+  to = "https://tele-extract.fly.dev/:splat"
+  status = 200
+
+# This is the "catch-all" rule for Single-Page Applications like React.
+# It ensures that if you refresh the page on a deep link (e.g., /user/profile),
+# it still serves the main index.html file so React can handle the routing.
+# This MUST be the last redirect rule.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
