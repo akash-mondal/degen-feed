@@ -9,6 +9,9 @@ import { TelegramService } from './services/telegramService';
 import { SupabaseService } from './services/supabaseService';
 import { Loader2 } from 'lucide-react';
 
+// Define the Telegram WebApp type locally for the component for type safety
+type TelegramWebApp = Window['Telegram']['WebApp'];
+
 function App() {
   const [appState, setAppState] = useState<'loading' | 'in_telegram' | 'not_in_telegram'>('loading');
   const [showSplash, setShowSplash] = useState(true);
@@ -20,52 +23,58 @@ function App() {
   const supabaseService = SupabaseService.getInstance();
 
   useEffect(() => {
-    const initializeApp = async () => {
-      // Get the Telegram WebApp object
-      const tg = telegramService.getTelegramWebApp();
-
-      // If the object doesn't exist, we are not in the Telegram environment.
-      if (!tg) {
-        console.error("Not a Telegram Mini App environment.");
-        setAppState('not_in_telegram');
-        return;
-      }
-
+    // This function will be called ONLY after we confirm the Telegram WebApp object is available.
+    const initializeApp = async (tg: TelegramWebApp) => {
       try {
-        // --- THIS IS THE KEY FIX ---
         // 1. Tell the Telegram client that the app is ready to be displayed.
-        // This is a crucial step that ensures properties like `initData` are available.
         tg.ready();
 
         // 2. Now that the app is ready, proceed with the rest of your initialization.
-        telegramService.initializeTelegramApp(); // This expands the app, sets the theme, etc.
+        telegramService.initializeTelegramApp();
         setDarkMode(tg.colorScheme === 'dark');
         
         const user = await telegramService.authenticateUser();
         if (user) {
           setTelegramUser(user);
-          
           await supabaseService.upsertUser(user);
           const initialTopics = await supabaseService.getTopics(user.id);
           setTopics(initialTopics);
-          
           setAppState('in_telegram');
         } else {
-          // This case now points to a real authentication issue, not a timing one.
-          throw new Error("Failed to authenticate Telegram user even after waiting.");
+          throw new Error("Failed to authenticate Telegram user.");
         }
       } catch (error) {
-        // This will catch any errors during authentication or data fetching.
         console.error("Failed to initialize the app within Telegram:", error);
         setAppState('not_in_telegram');
       }
     };
 
-    // A small delay can sometimes help ensure the Telegram script has fully executed.
-    const startTimeout = setTimeout(initializeApp, 100);
+    // --- NEW ROBUST POLLING LOGIC ---
+    // We will try to find the window.Telegram.WebApp object every 100ms for 5 seconds.
+    let attempts = 0;
+    const maxAttempts = 50; // 50 * 100ms = 5 seconds
+    const intervalId = setInterval(() => {
+      const tg = window.Telegram?.WebApp;
 
-    return () => clearTimeout(startTimeout);
-  }, []);
+      // If we find the object, we clear the interval and initialize the app.
+      if (tg) {
+        clearInterval(intervalId);
+        initializeApp(tg);
+      } else {
+        attempts++;
+        // If we've tried for 5 seconds and it's still not there, we assume we're not in Telegram.
+        if (attempts >= maxAttempts) {
+          clearInterval(intervalId);
+          console.error("Telegram WebApp SDK could not be found after 5 seconds. Running in browser mode.");
+          setAppState('not_in_telegram');
+        }
+      }
+    }, 100);
+
+    // This is a cleanup function that runs if the component unmounts.
+    return () => clearInterval(intervalId);
+
+  }, []); // The empty dependency array ensures this effect runs only once on mount.
 
   useEffect(() => {
     if (darkMode) {
@@ -80,7 +89,7 @@ function App() {
 
   const toggleDarkMode = () => setDarkMode(prev => !prev);
   
-  // Render based on app state
+  // The rest of your component's render logic remains the same
   switch (appState) {
     case 'loading':
       return (
