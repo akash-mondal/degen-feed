@@ -21,15 +21,25 @@ function App() {
 
   useEffect(() => {
     const initializeApp = async () => {
-      try {
-        // 1. Wait for the Telegram environment to be fully ready.
-        // This is the key fix that replaces polling/setTimeout.
-        await telegramService.waitForReady();
+      // Get the Telegram WebApp object
+      const tg = telegramService.getTelegramWebApp();
 
-        // 2. Now that we're sure it's ready, proceed with initialization.
-        telegramService.initializeTelegramApp();
-        const tg = telegramService.getTelegramWebApp();
-        setDarkMode(tg?.colorScheme === 'dark');
+      // If the object doesn't exist, we are not in the Telegram environment.
+      if (!tg) {
+        console.error("Not a Telegram Mini App environment.");
+        setAppState('not_in_telegram');
+        return;
+      }
+
+      try {
+        // --- THIS IS THE KEY FIX ---
+        // 1. Tell the Telegram client that the app is ready to be displayed.
+        // This is a crucial step that ensures properties like `initData` are available.
+        tg.ready();
+
+        // 2. Now that the app is ready, proceed with the rest of your initialization.
+        telegramService.initializeTelegramApp(); // This expands the app, sets the theme, etc.
+        setDarkMode(tg.colorScheme === 'dark');
         
         const user = await telegramService.authenticateUser();
         if (user) {
@@ -41,17 +51,20 @@ function App() {
           
           setAppState('in_telegram');
         } else {
-          // This path should now be much harder to reach inside Telegram
+          // This case now points to a real authentication issue, not a timing one.
           throw new Error("Failed to authenticate Telegram user even after waiting.");
         }
       } catch (error) {
-        // This will catch the rejection from waitForReady() or any subsequent error.
-        console.error("Failed to initialize the app:", error);
+        // This will catch any errors during authentication or data fetching.
+        console.error("Failed to initialize the app within Telegram:", error);
         setAppState('not_in_telegram');
       }
     };
 
-    initializeApp();
+    // A small delay can sometimes help ensure the Telegram script has fully executed.
+    const startTimeout = setTimeout(initializeApp, 100);
+
+    return () => clearTimeout(startTimeout);
   }, []);
 
   useEffect(() => {
