@@ -15,48 +15,6 @@ export class TelegramService {
   isTelegramMiniApp(): boolean {
     return !!window.Telegram?.WebApp?.initData;
   }
-  
-  // NEW: A robust, event-driven method to wait for the SDK to be fully initialized.
-  async waitForReady(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // If we're not in a Telegram environment at all, reject immediately.
-      if (!window.Telegram?.WebApp) {
-        return reject(new Error("Telegram WebApp environment not found."));
-      }
-
-      const tg = window.Telegram.WebApp;
-
-      // If initData is already available, we're good to go.
-      if (tg.initData) {
-        return resolve();
-      }
-
-      // Fallback: If after 3 seconds nothing happens, reject.
-      const timeout = setTimeout(() => {
-        if (!tg.initData) {
-          reject(new Error("Telegram WebApp timed out waiting for initData."));
-        } else {
-          // It appeared just in time.
-          resolve();
-        }
-      }, 3000);
-
-      // The 'viewportChanged' event is a reliable signal that the app has been
-      // displayed and the client has injected its data.
-      const onViewportChanged = () => {
-        if (tg.initData) {
-          clearTimeout(timeout);
-          tg.offEvent('viewportChanged', onViewportChanged);
-          resolve();
-        }
-      };
-
-      tg.onEvent('viewportChanged', onViewportChanged);
-      
-      // Also call expand() here, as this is often what triggers the first viewportChanged event.
-      tg.expand();
-    });
-  }
 
   getTelegramWebApp() {
     return window.Telegram?.WebApp;
@@ -65,7 +23,6 @@ export class TelegramService {
   initializeTelegramApp(): void {
     const tg = this.getTelegramWebApp();
     if (tg) {
-      tg.ready();
       tg.expand();
       if (tg.colorScheme === 'dark') {
         document.documentElement.classList.add('dark');
@@ -78,6 +35,7 @@ export class TelegramService {
   async authenticateUser(): Promise<TelegramUser | null> {
     const tg = this.getTelegramWebApp();
     if (!tg || !tg.initData) {
+      console.warn("authenticateUser called but tg.initData is not available.");
       return null;
     }
 
