@@ -13,8 +13,49 @@ export class TelegramService {
   }
 
   isTelegramMiniApp(): boolean {
-    // The presence of initData is the most reliable check.
     return !!window.Telegram?.WebApp?.initData;
+  }
+  
+  // NEW: A robust, event-driven method to wait for the SDK to be fully initialized.
+  async waitForReady(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // If we're not in a Telegram environment at all, reject immediately.
+      if (!window.Telegram?.WebApp) {
+        return reject(new Error("Telegram WebApp environment not found."));
+      }
+
+      const tg = window.Telegram.WebApp;
+
+      // If initData is already available, we're good to go.
+      if (tg.initData) {
+        return resolve();
+      }
+
+      // Fallback: If after 3 seconds nothing happens, reject.
+      const timeout = setTimeout(() => {
+        if (!tg.initData) {
+          reject(new Error("Telegram WebApp timed out waiting for initData."));
+        } else {
+          // It appeared just in time.
+          resolve();
+        }
+      }, 3000);
+
+      // The 'viewportChanged' event is a reliable signal that the app has been
+      // displayed and the client has injected its data.
+      const onViewportChanged = () => {
+        if (tg.initData) {
+          clearTimeout(timeout);
+          tg.offEvent('viewportChanged', onViewportChanged);
+          resolve();
+        }
+      };
+
+      tg.onEvent('viewportChanged', onViewportChanged);
+      
+      // Also call expand() here, as this is often what triggers the first viewportChanged event.
+      tg.expand();
+    });
   }
 
   getTelegramWebApp() {
@@ -24,12 +65,8 @@ export class TelegramService {
   initializeTelegramApp(): void {
     const tg = this.getTelegramWebApp();
     if (tg) {
-      // Call ready() to inform Telegram the app is loaded.
       tg.ready();
-      // Expand the app to full height.
       tg.expand();
-      
-      // Set theme based on Telegram's color scheme
       if (tg.colorScheme === 'dark') {
         document.documentElement.classList.add('dark');
       } else {
@@ -45,16 +82,11 @@ export class TelegramService {
     }
 
     try {
-      // In a real implementation, you would send this to your server for validation
-      // For now, we'll parse the initData client-side (NOT SECURE for production)
       const initData = this.parseInitData(tg.initData);
-      
       if (initData.user) {
-        // Store user data in localStorage for persistence
         localStorage.setItem('telegram_user', JSON.stringify(initData.user));
         return initData.user;
       }
-      
       return null;
     } catch (error) {
       console.error('Error authenticating Telegram user:', error);
@@ -76,7 +108,6 @@ export class TelegramService {
     localStorage.removeItem('telegram_user');
   }
 
-  // Simple client-side parsing (NOT SECURE - use server validation in production)
   private parseInitData(initDataRaw: string): any {
     const urlParams = new URLSearchParams(initDataRaw);
     const user = urlParams.get('user');
@@ -99,7 +130,6 @@ export class TelegramService {
     }
   }
 
-  // Telegram-specific UI interactions
   showBackButton(callback: () => void): void {
     const tg = this.getTelegramWebApp();
     if (tg?.BackButton) {

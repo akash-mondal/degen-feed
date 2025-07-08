@@ -1,5 +1,7 @@
+// ./src/services/aiService.ts
+
 import API_CONFIG from './config';
-import { Tweet, TelegramMessage } from '../types';
+import { Tweet, TelegramMessage, SignalProfile, SignalRule } from '../types';
 
 export class AIService {
   private static instance: AIService;
@@ -18,82 +20,109 @@ export class AIService {
     return (now - messageTime) <= twentyFourHours;
   }
 
+  // MODIFICATION: The main summarize method is now much more powerful.
   async summarizeContent(
     tweets: Tweet[] = [], 
     telegramMessages: TelegramMessage[] = [], 
     twitterUsername?: string, 
     telegramChannelName?: string,
-    summaryLength: 'concise' | 'detailed' | 'comprehensive' = 'detailed'
+    summaryLengthOption: 'concise' | 'detailed' | 'comprehensive' | 'custom' = 'detailed',
+    customWordCount?: number,
+    trackedSenders?: string[]
   ): Promise<{ twitterSummary?: string; telegramSummary?: string }> {
     try {
       const now = new Date();
       let twitterSummary: string | undefined;
       let telegramSummary: string | undefined;
 
-      const getWordCount = (length: 'concise' | 'detailed' | 'comprehensive', hasContent: boolean) => {
-        if (!hasContent) return '20-30';
-        switch (length) {
+      const getWordCount = () => {
+        if (summaryLengthOption === 'custom' && customWordCount) {
+          return `${customWordCount - 10}-${customWordCount}`;
+        }
+        switch (summaryLengthOption) {
           case 'concise': return '30-40';
           case 'detailed': return '50-75';
           case 'comprehensive': return '100-150';
           default: return '50-75';
         }
       };
+      
+      const wordCount = getWordCount();
+      const hasTrackedSenders = trackedSenders && trackedSenders.length > 0;
 
-      // Process Twitter content
+      // --- Process Twitter Content ---
       if (tweets.length > 0 && twitterUsername) {
-        const recentTweets = tweets.filter(tweet => this.isWithin24Hours(tweet.createdAt));
-        const olderTweets = tweets.filter(tweet => !this.isWithin24Hours(tweet.createdAt));
-        const wordCount = getWordCount(summaryLength, recentTweets.length > 0);
+        let relevantTweets = tweets.filter(tweet => this.isWithin24Hours(tweet.createdAt));
+        
+        // If tracking specific senders, filter tweets by them.
+        if (hasTrackedSenders) {
+          const lowercasedSenders = trackedSenders.map(s => s.toLowerCase());
+          relevantTweets = relevantTweets.filter(tweet => 
+            lowercasedSenders.includes(tweet.author.userName.toLowerCase())
+          );
+        }
 
-        if (recentTweets.length === 0) {
-          const oldTweetTexts = olderTweets.slice(0, 5).map(tweet => 
-            `"${tweet.text}" (from ${new Date(tweet.createdAt).toLocaleDateString()})`
-          ).join('\n\n');
-
-          const systemPrompt = `You are a social media analyst. The user you're tracking hasn't posted recently. Briefly summarize their last known activity in a conversational tone, making it clear the information isn't current. Write about ${wordCount} words.`;
-          const userPrompt = `@${twitterUsername} has been quiet. What were their last few posts about?\n\nPrevious Posts:\n${oldTweetTexts}`;
-          
-          twitterSummary = await this.callAI(userPrompt, systemPrompt, twitterUsername);
-
+        if (relevantTweets.length === 0) {
+          twitterSummary = hasTrackedSenders
+            ? `The tracked users in @${twitterUsername} have not posted in the last 24 hours.`
+            : `No new posts from @${twitterUsername} in the last 24 hours.`;
         } else {
-          const topTweets = recentTweets
+          const topTweets = relevantTweets
             .sort((a, b) => (b.likeCount + b.retweetCount) - (a.likeCount + a.retweetCount))
-            .slice(0, 5);
+            .slice(0, 7); // Get a slightly larger sample for better summaries
 
-          const recentTweetTexts = topTweets.map(tweet => {
+          const tweetTexts = topTweets.map(tweet => {
             const hoursAgo = Math.floor((now.getTime() - new Date(tweet.createdAt).getTime()) / 3600000);
-            return `"${tweet.text}" (Likes: ${tweet.likeCount}, Retweets: ${tweet.retweetCount}, ~${hoursAgo}h ago)`;
+            return `From @${tweet.author.userName}: "${tweet.text}" (Likes: ${tweet.likeCount}, ~${hoursAgo}h ago)`;
           }).join('\n\n');
 
-          const systemPrompt = `You are a sharp social media analyst. Your goal is to synthesize raw social media posts into a clear, engaging, and concise briefing. Identify the key themes, topics, and sentiment. Weave these details into a smooth, easy-to-read paragraph of about ${wordCount} words. The tone should be informative but conversational. Do not use lists. Vary your sentence structure and avoid starting every summary with the person's name.`;
-          const userPrompt = `Summarize the recent X activity for @${twitterUsername} based on their top posts from the last 24 hours.\n\nPosts:\n${recentTweetTexts}`;
+          const focusPrompt = hasTrackedSenders 
+            ? `Pay special attention to the posts from these users: ${trackedSenders.join(', ')}.`
+            : `Synthesize the key themes, topics, and sentiment from the posts.`;
           
-          twitterSummary = await this.callAI(userPrompt, systemPrompt, twitterUsername);
+          const systemPrompt = `You are a sharp social media analyst. Your goal is to synthesize raw X posts into a clear, engaging briefing of about ${wordCount} words. ${focusPrompt} Weave these details into a smooth, easy-to-read paragraph. Do not use lists.`;
+          const userPrompt = `Summarize the recent X activity for @${twitterUsername}. The most relevant posts from the last 24 hours are:\n\n${tweetTexts}`;
+          
+          twitterSummary = await this.callAI(userPrompt, systemPrompt);
         }
       }
 
-      // Process Telegram content
+      // --- Process Telegram Content ---
       if (telegramMessages.length > 0 && telegramChannelName) {
-        const recentMessages = telegramMessages.filter(msg => this.isWithin24Hours(msg.date));
-        const wordCount = getWordCount(summaryLength, recentMessages.length > 0);
+        let relevantMessages = telegramMessages.filter(msg => this.isWithin24Hours(msg.date));
 
-        if (recentMessages.length === 0) {
-          telegramSummary = `There has been no new activity in the ${telegramChannelName} channel recently.`;
+        // If tracking specific senders, filter messages by them.
+        if (hasTrackedSenders) {
+          const lowercasedSenders = trackedSenders.map(s => s.toLowerCase());
+          relevantMessages = relevantMessages.filter(msg => 
+            lowercasedSenders.includes(msg.sender.name.toLowerCase()) || 
+            (msg.sender.username && lowercasedSenders.includes(msg.sender.username.toLowerCase())) ||
+            lowercasedSenders.includes(String(msg.sender.id))
+          );
+        }
+        
+        if (relevantMessages.length === 0) {
+          telegramSummary = hasTrackedSenders
+            ? `The tracked members in the "${telegramChannelName}" channel have not sent messages recently.`
+            : `No new activity in the "${telegramChannelName}" channel recently.`;
         } else {
-          const topMessages = recentMessages
+          const topMessages = relevantMessages
             .sort((a, b) => (b.views || 0) - (a.views || 0))
-            .slice(0, 5);
+            .slice(0, 10); // More messages for better context
 
-          const recentMessageTexts = topMessages.map(msg => {
-             const hoursAgo = Math.floor((now.getTime() - new Date(msg.date).getTime()) / 3600000);
-            return `"${msg.text}" (from ${msg.sender.name}, ~${hoursAgo}h ago)`;
+          const messageTexts = topMessages.map(msg => {
+            const hoursAgo = Math.floor((now.getTime() - new Date(msg.date).getTime()) / 3600000);
+            return `From ${msg.sender.name}: "${msg.text}" (~${hoursAgo}h ago)`;
           }).join('\n\n');
 
-          const systemPrompt = `You are an analyst summarizing a group chat. Your goal is to synthesize the key discussion points, topics, and overall sentiment from a Telegram channel into a clear, engaging summary. Identify the main themes of conversation. Weave these details into a smooth, easy-to-read paragraph of about ${wordCount} words. The tone should be informative and conversational. Do not use lists.`;
-          const userPrompt = `Summarize the recent discussion in the "${telegramChannelName}" Telegram channel based on these key messages from the last 24 hours.\n\nMessages:\n${recentMessageTexts}`;
+          const focusPrompt = hasTrackedSenders
+            ? `Focus on the conversation points from these specific members: ${trackedSenders.join(', ')}.`
+            : `Identify the main themes of conversation from the channel.`;
 
-          telegramSummary = await this.callAI(userPrompt, systemPrompt, undefined, telegramChannelName);
+          const systemPrompt = `You are an analyst summarizing a group chat. Synthesize key discussion points from a Telegram channel into a clear summary of about ${wordCount} words. ${focusPrompt} Weave details into a smooth paragraph. Do not use lists.`;
+          const userPrompt = `Summarize the recent discussion in the "${telegramChannelName}" Telegram channel based on these key messages from the last 24 hours:\n\n${messageTexts}`;
+
+          telegramSummary = await this.callAI(userPrompt, systemPrompt);
         }
       }
 
@@ -107,7 +136,68 @@ export class AIService {
     }
   }
 
-  private async callAI(prompt: string, systemPrompt: string, twitterUsername?: string, telegramChannelName?: string): Promise<string> {
+  // NEW: Method to summarize an entire signal profile based on rules
+  async summarizeSignalProfile(profile: SignalProfile): Promise<string> {
+    try {
+      const allMessages = profile.topics.flatMap(topic => topic.telegramMessages || []);
+      const recentMessages = allMessages.filter(msg => this.isWithin24Hours(msg.date));
+
+      if (recentMessages.length === 0) {
+        return "No recent activity across any sources in this profile.";
+      }
+
+      // --- Rule-based Filtering ---
+      let findings: string[] = [];
+      const lowercasedMessageTexts = recentMessages.map(m => m.text.toLowerCase());
+
+      profile.rules.forEach(rule => {
+        let mentionCount = 0;
+        let mentionedInGroups = new Set<string>();
+
+        recentMessages.forEach(msg => {
+          if (msg.text.toLowerCase().includes(rule.value.toLowerCase())) {
+            mentionCount++;
+            if(msg.sender.name) mentionedInGroups.add(msg.sender.name);
+          }
+        });
+
+        if (rule.type !== 'custom' && rule.mentionThreshold && rule.groupThreshold) {
+          if (mentionCount >= rule.mentionThreshold && mentionedInGroups.size >= rule.groupThreshold) {
+            findings.push(`ALERT: "${rule.value}" (${rule.type}) was mentioned ${mentionCount} times across ${mentionedInGroups.size} groups.`);
+          }
+        } else if (rule.type === 'custom') {
+          // For custom rules, we can add more sophisticated logic or just pass it to the AI
+          findings.push(`Custom Rule to check: ${rule.value}`);
+        }
+      });
+      
+      const topMessages = recentMessages.sort((a,b) => (b.views || 0) - (a.views || 0)).slice(0, 15);
+      const contextText = topMessages.map(m => `From ${m.sender.name}: "${m.text}"`).join('\n');
+
+      const systemPrompt = `You are an elite intelligence analyst. Your task is to provide a high-level briefing for the signal profile named "${profile.profileName}". First, state any alerts that were triggered. Then, synthesize the overall narrative, key themes, and sentiment from the provided chat messages. The summary should be around 150-200 words. Be concise and impactful.`;
+      
+      const userPrompt = `
+        Signal Profile: "${profile.profileName}"
+
+        Triggered Alerts:
+        ${findings.length > 0 ? findings.join('\n') : 'None'}
+
+        Key Messages from the last 24 hours:
+        ${contextText}
+
+        Please provide your intelligence briefing.
+      `;
+      
+      const summary = await this.callAI(userPrompt, systemPrompt);
+      return summary;
+
+    } catch (error) {
+      console.error('Error summarizing signal profile:', error);
+      return 'Could not generate profile summary at this time.';
+    }
+  }
+
+  private async callAI(prompt: string, systemPrompt: string): Promise<string> {
     const response = await fetch(`${API_CONFIG.ai.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -115,69 +205,36 @@ export class AIService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'meta-llama/Llama-3.2-3B-Instruct-Turbo',
+        model: 'meta-llama/Llama-3-8B-Instruct', // Using a slightly more powerful model for better synthesis
         messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
         ],
         stream: false,
         max_tokens: 4000,
-        temperature: 0.7,
+        temperature: 0.6,
         stop: ["<think>", "</think>"]
       }),
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      const errorData = await response.text();
+      console.error("AI API Error:", errorData);
+      throw new Error(`AI API error! status: ${response.status}`);
     }
 
     const data = await response.json();
     let content = data.choices[0]?.message?.content || 'No summary available.';
-    content = this.cleanContent(content, twitterUsername, telegramChannelName);
+    content = this.cleanContent(content);
     
     return content || 'Unable to generate summary at this time.';
   }
 
-  private cleanContent(content: string, twitterUsername?: string, telegramChannelName?: string): string {
-    // Remove thinking patterns and markdown
-    content = content.replace(/<think>[\s\S]*?<\/think>/gi, '');
-    content = content.replace(/\*\*Think[\s\S]*?\*\*/gi, '');
-    content = content.replace(/^Think[\s\S]*?:/gim, '');
-    content = content.replace(/^Thinking[\s\S]*?:/gim, '');
-    content = content.replace(/^Let me[\s\S]*?:/gim, '');
-    content = content.replace(/^Hmm[\s\S]*?:/gim, '');
-    content = content.replace(/^Based on[\s\S]*?,/gim, '');
-    content = content.replace(/^\d+\.\s*/gm, '');
-    content = content.replace(/^[\*\-]\s*/gm, '');
-    content = content.replace(/[\*#]/g, '');
-    
-    // Remove introductory phrases that the AI might still add
-    content = content.replace(/^Here's a summary of the recent activity:/i, '');
-    content = content.replace(/^Here's a summary:/i, '');
-
-    // Clean up and trim
-    content = content.trim();
-    
-    // Check if the summary starts with the username (in quotes) and remove it
-    if (twitterUsername && content.toLowerCase().startsWith(`"${twitterUsername.toLowerCase()}"`)) {
-        content = content.substring(twitterUsername.length + 2).trim();
-    }
-    if (telegramChannelName && content.toLowerCase().startsWith(`"${telegramChannelName.toLowerCase()}"`)) {
-        content = content.substring(telegramChannelName.length + 2).trim();
-    }
-
-    return content;
-  }
-
-  // Legacy method for backward compatibility
-  async summarizeTweets(tweets: Tweet[], username: string): Promise<string> {
-    const result = await this.summarizeContent(tweets, [], username, undefined);
-    return result.twitterSummary || 'Unable to generate summary at this time.';
+  private cleanContent(content: string): string {
+    // Basic cleaning of AI artifacts
+    return content.replace(/<think>[\s\S]*?<\/think>/gi, '')
+                 .replace(/\*\*Think[\s\S]*?\*\*/gi, '')
+                 .replace(/^Here's a summary:/i, '')
+                 .trim();
   }
 }
