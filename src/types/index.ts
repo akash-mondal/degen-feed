@@ -41,27 +41,18 @@ export interface TelegramMessage {
   };
 }
 
-// Extended to include the successful join response from our API
 export interface TelegramResponse {
   messages?: TelegramMessage[];
   message?: string;
   channel_name?: string;
   valid_and_joinable?: boolean;
-  status?: 'success' | 'error';
-  details?: {
-    id: number;
-    title: string;
-    type: string;
-  };
 }
 
-// MODIFICATION: Updated Topic interface with new fields
 export interface Topic {
   id: string;
   type: 'twitter' | 'telegram' | 'both';
   username?: string; // Twitter username
-  channelName?: string; // Telegram channel public name or private title
-  telegramChannelId?: number; // NEW: The numeric ID for private/public channels
+  channelName?: string; // Telegram channel name
   displayName: string;
   twitterSummary?: string;
   telegramSummary?: string;
@@ -70,28 +61,7 @@ export interface Topic {
   lastUpdated: number;
   profilePicture?: string;
   summaryLength?: 'concise' | 'detailed' | 'comprehensive';
-  customSummaryLength?: number; // NEW: For custom word count
-  trackedSenders?: string[]; // NEW: For tracking specific people/senders (Usernames or IDs)
 }
-
-// NEW: Interface for defining a rule within a Signal Profile
-export interface SignalRule {
-  type: 'ticker' | 'ca' | 'keyword' | 'custom'; // Type of rule
-  value: string; // The ticker, CA, keyword, or natural language rule
-  mentionThreshold?: number; // e.g., "alert if mentioned > 5 times"
-  groupThreshold?: number; // e.g., "in at least 2 groups"
-}
-
-// NEW: Interface for the Signal Profile feature
-export interface SignalProfile {
-  id: string;
-  userId: number;
-  profileName: string;
-  rules: SignalRule[];
-  topics: Topic[]; // We'll nest the full topics here for easy frontend use
-  createdAt: string;
-}
-
 
 export interface CacheData {
   topics: Topic[];
