@@ -22,36 +22,42 @@ function App() {
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // 1. Wait for the Telegram environment to be fully ready.
-        // This is the key fix that replaces polling/setTimeout.
-        await telegramService.waitForReady();
+        if (telegramService.isTelegramMiniApp()) {
+          telegramService.initializeTelegramApp();
+          const tg = telegramService.getTelegramWebApp();
+          setDarkMode(tg?.colorScheme === 'dark');
+          
+          const user = await telegramService.authenticateUser();
+          if (user) {
+            setTelegramUser(user);
+            
+            // 1. Upsert user in Supabase
+            await supabaseService.upsertUser(user);
 
-        // 2. Now that we're sure it's ready, proceed with initialization.
-        telegramService.initializeTelegramApp();
-        const tg = telegramService.getTelegramWebApp();
-        setDarkMode(tg?.colorScheme === 'dark');
-        
-        const user = await telegramService.authenticateUser();
-        if (user) {
-          setTelegramUser(user);
-          
-          await supabaseService.upsertUser(user);
-          const initialTopics = await supabaseService.getTopics(user.id);
-          setTopics(initialTopics);
-          
-          setAppState('in_telegram');
+            // 2. Fetch topics from Supabase
+            const initialTopics = await supabaseService.getTopics(user.id);
+            setTopics(initialTopics);
+            
+            setAppState('in_telegram');
+          } else {
+            // This is unlikely but a good safeguard.
+            throw new Error("Failed to authenticate Telegram user.");
+          }
         } else {
-          // This path should now be much harder to reach inside Telegram
-          throw new Error("Failed to authenticate Telegram user even after waiting.");
+          console.warn("Telegram WebApp environment not detected.");
+          setAppState('not_in_telegram');
         }
       } catch (error) {
-        // This will catch the rejection from waitForReady() or any subsequent error.
         console.error("Failed to initialize the app:", error);
+        // If any step in the try block fails, we catch the error here.
+        // We then set the state to 'not_in_telegram' to show the error screen
+        // instead of being stuck on 'loading'.
         setAppState('not_in_telegram');
       }
     };
 
-    initializeApp();
+    const timer = setTimeout(initializeApp, 100); // Small delay to ensure scripts are loaded
+    return () => clearTimeout(timer);
   }, []);
 
   useEffect(() => {

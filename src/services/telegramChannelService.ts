@@ -1,5 +1,3 @@
-// ./src/services/telegramChannelService.ts
-
 import { TelegramResponse, TelegramMessage } from '../types';
 import API_CONFIG from './config';
 
@@ -14,35 +12,12 @@ export class TelegramChannelService {
     return TelegramChannelService.instance;
   }
 
-  async joinPrivateChannel(inviteLink: string): Promise<TelegramResponse> {
-    try {
-      const hash = inviteLink.split('/').pop();
-      if (!hash) {
-        throw new Error('Invalid invite link format');
-      }
-
-      const response = await fetch(`${TelegramChannelService.BASE_URL}/join/${hash}`);
-      
-      const data: TelegramResponse = await response.json();
-
-      if (!response.ok || data.status !== 'success') {
-        const errorDetail = (data as any).detail || 'Failed to join channel.';
-        throw new Error(errorDetail);
-      }
-
-      return data;
-    } catch (error) {
-      console.error('Error joining private Telegram channel:', error);
-      throw error;
-    }
-  }
-
   async checkChannel(channelName: string): Promise<boolean> {
     try {
       const response = await fetch(`${TelegramChannelService.BASE_URL}/check/${channelName}`);
       
       if (!response.ok) {
-        return false;
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data: TelegramResponse = await response.json();
@@ -53,9 +28,9 @@ export class TelegramChannelService {
     }
   }
 
-  async getChannelMessages(channelIdentifier: string | number): Promise<TelegramMessage[]> {
+  async getChannelMessages(channelName: string): Promise<TelegramMessage[]> {
     try {
-      const response = await fetch(`${TelegramChannelService.BASE_URL}/scrape/${channelIdentifier}`);
+      const response = await fetch(`${TelegramChannelService.BASE_URL}/scrape/${channelName}`);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -63,20 +38,21 @@ export class TelegramChannelService {
 
       const data = await response.json();
 
+      // Check if the response is an array (messages) or an object with a message property
       if (Array.isArray(data)) {
-        // BUG FIX: Re-added filtering for messages from the last 24 hours.
+        // Filter messages from the last 24 hours
         const now = Date.now();
         const twentyFourHours = 24 * 60 * 60 * 1000;
         
-        return (data as TelegramMessage[]).filter((message) => {
+        const recentMessages = data.filter((message: TelegramMessage) => {
           const messageTime = new Date(message.date).getTime();
           return (now - messageTime) <= twentyFourHours;
         });
 
+        return recentMessages;
       } else if (data.message && data.message.includes('No activity')) {
         return [];
       } else {
-        console.warn('Received non-array response from scrape endpoint:', data);
         return [];
       }
     } catch (error) {
